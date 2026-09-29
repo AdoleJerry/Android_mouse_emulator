@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:windows_app/home/device_picker_page.dart';
+import 'package:windows_app/services/discovery_service.dart';
 
 import 'package:windows_app/services/websocket_service.dart';
 import 'package:windows_app/theme/app_colors.dart';
@@ -12,6 +14,7 @@ class TouchpadHomePage extends StatefulWidget {
 
 class _TouchpadHomePageState extends State<TouchpadHomePage> {
   late final WebSocketService _ws;
+  late final DiscoveryService _disco;
 
   // ---- Local UI-only state (modes are a UI concept) ----
   bool _scrollMode = false;
@@ -21,6 +24,8 @@ class _TouchpadHomePageState extends State<TouchpadHomePage> {
   @override
   void initState() {
     super.initState();
+    _disco = DiscoveryService();
+    _disco.start();
     _ws = WebSocketService();
     _ws.addListener(_onServiceChanged);
     _ws.init();
@@ -28,6 +33,7 @@ class _TouchpadHomePageState extends State<TouchpadHomePage> {
 
   @override
   void dispose() {
+    _disco.dispose();
     _ws.removeListener(_onServiceChanged);
     _ws.dispose();
     super.dispose();
@@ -64,8 +70,9 @@ class _TouchpadHomePageState extends State<TouchpadHomePage> {
           'Could not reach the server after 5 attempts.\n\n'
           'Check that:\n'
           '• Your phone and PC are on the same Wi-Fi\n'
-          '• The IP matches your PC\'s LAN address\n'
-          '• The Go server is running',
+          '• The Go server is running on your PC\n'
+          '• The network allows device discovery\n\n'
+          'Tap "Pick Device" to try again.',
           style: TextStyle(color: AppColors.text2, height: 1.5),
         ),
         actions: [
@@ -78,11 +85,13 @@ class _TouchpadHomePageState extends State<TouchpadHomePage> {
           ),
           TextButton(
             onPressed: () {
-              Navigator.pop(ctx);
-              _openSettings();
+              Navigator.of(ctx).pop();
+              Future.delayed(const Duration(milliseconds: 250), () {
+                if (mounted) _openSettings();
+              });
             },
             child: const Text(
-              'Enter IP',
+              'Pick Device',
               style: TextStyle(color: AppColors.accent),
             ),
           ),
@@ -116,73 +125,27 @@ class _TouchpadHomePageState extends State<TouchpadHomePage> {
   }
 
   Future<void> _openSettings() async {
-    final controller = TextEditingController(text: _ws.serverUrl);
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.surfaceHi,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: const BorderSide(color: AppColors.border),
-        ),
-        title: const Text(
-          'Server',
-          style: TextStyle(color: AppColors.text, fontWeight: FontWeight.w600),
-        ),
-        content: TextField(
-          controller: controller,
-          style: const TextStyle(color: AppColors.text),
-          decoration: InputDecoration(
-            labelText: 'WebSocket URL',
-            labelStyle: const TextStyle(color: AppColors.text2),
-            hintText: 'ws://192.168.1.42:8080/ws',
-            hintStyle: const TextStyle(color: AppColors.text3),
-            filled: true,
-            fillColor: AppColors.surface,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: AppColors.border),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: AppColors.border),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: AppColors.accent, width: 1.5),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text(
-              'Cancel',
-              style: TextStyle(color: AppColors.text2),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, WebSocketService().defaultUrl),
-            child: const Text(
-              'Reset',
-              style: TextStyle(color: AppColors.warning),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text(
-              'Save',
-              style: TextStyle(color: AppColors.accent),
-            ),
-          ),
-        ],
-      ),
+    // Make sure discovery is running.
+    if (!_disco.isRunning) {
+      final ok = await _disco.start();
+      if (!ok) {
+        debugPrint('[UI] discovery failed to start');
+        return;
+      }
+    }
+
+    if (!mounted) return;
+
+    final picked = await showDevicePicker(
+      context,
+      _disco,
+      currentUrl: _ws.isConnected ? _ws.serverUrl : null,
     );
 
-    if (result != null && result.isNotEmpty && result != _ws.serverUrl) {
-      _promptShown = false;
-      await _ws.setServerUrl(result);
-    }
+    if (picked == null) return;
+
+    _promptShown = false;
+    await _ws.setServerUrl(picked.wsUrl);
   }
 
   // ===================================================================

@@ -12,7 +12,6 @@ enum WsState { disconnected, connecting, connected, gaveUp }
 
 class WebSocketService extends ChangeNotifier {
   WebSocketService({
-    this.defaultUrl = 'ws://192.168.1.14:8080/ws',
     this.maxRetries = 5,
     this.retryDelay = const Duration(seconds: 3),
     this.sensitivity = 1.8,
@@ -20,7 +19,7 @@ class WebSocketService extends ChangeNotifier {
     this.connectTimeout = const Duration(seconds: 8),
   }) : _serverUrl = defaultUrl;
 
-  final String defaultUrl;
+  static const String defaultUrl = 'ws://192.168.1.14:8080/ws';
   final int maxRetries;
   final Duration retryDelay;
   final double sensitivity;
@@ -226,15 +225,20 @@ class WebSocketService extends ChangeNotifier {
     if (sub != null) {
       try {
         sub.cancel().catchError((_) => null);
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[WS] sub.cancel threw (ignored): $e');
+      }
     }
 
     if (ch != null) {
-      try {
-        ch.sink.close(ws_status.normalClosure);
-      } catch (e) {
-        debugPrint('[WS] close error (ignored): $e');
-      }
+      final sink = ch.sink;
+      Future<void>.microtask(() {
+        try {
+          sink.close(ws_status.normalClosure); // 1000, not 1001
+        } catch (e) {
+          debugPrint('[WS] sink.close threw (ignored): $e');
+        }
+      }).catchError((_) => null);
     }
   }
 

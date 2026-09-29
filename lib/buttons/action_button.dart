@@ -23,9 +23,7 @@ class ActionButton extends StatefulWidget {
 class _ActionButtonState extends State<ActionButton>
     with TickerProviderStateMixin {
   late final AnimationController _activePulseController;
-  late final Animation<double> _activePulseAnimation;
   late final AnimationController _tapPulseController;
-  late final Animation<double> _tapPulseAnimation;
 
   @override
   void initState() {
@@ -35,20 +33,19 @@ class _ActionButtonState extends State<ActionButton>
       vsync: this,
       duration: const Duration(milliseconds: 600),
     );
-    _activePulseAnimation = Tween<double>(begin: 1.0, end: 1.15).animate(
-      CurvedAnimation(parent: _activePulseController, curve: Curves.easeInOut),
-    );
-    if (widget.isActive) {
-      _activePulseController.repeat(reverse: true);
-    }
-
     _tapPulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 200),
     );
-    _tapPulseAnimation = Tween<double>(begin: 1.0, end: 1.2).animate(
-      CurvedAnimation(parent: _tapPulseController, curve: Curves.easeOutBack),
-    );
+
+    // Drive rebuilds ourselves — no merged listenable, no
+    // AnimatedBuilder, no framework-owned listener shuffling.
+    _activePulseController.addListener(_onTick);
+    _tapPulseController.addListener(_onTick);
+
+    if (widget.isActive) {
+      _activePulseController.repeat(reverse: true);
+    }
   }
 
   @override
@@ -64,15 +61,38 @@ class _ActionButtonState extends State<ActionButton>
 
   @override
   void dispose() {
+    _activePulseController.removeListener(_onTick);
+    _tapPulseController.removeListener(_onTick);
     _activePulseController.dispose();
     _tapPulseController.dispose();
     super.dispose();
   }
 
-  void _playTapPulse() => _tapPulseController.forward(from: 0.0);
+  void _onTick() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  void _playTapPulse() {
+    if (!mounted) return;
+    _tapPulseController.forward(from: 0.0);
+  }
 
   @override
   Widget build(BuildContext context) {
+    // Compute scale directly from controller values — no animation
+    // objects, no merged listenables, nothing that can be "used after
+    // dispose" because we only read controller state.
+    double scale = 1.0;
+    if (widget.isActive) {
+      final t = Curves.easeInOut.transform(_activePulseController.value);
+      scale *= 1.0 + 0.15 * t;
+    }
+    if (_tapPulseController.isAnimating) {
+      final t = Curves.easeOutBack.transform(_tapPulseController.value);
+      scale *= 1.0 + 0.2 * t;
+    }
+
     return GestureDetector(
       onTap: () {
         widget.onPressed();
@@ -81,19 +101,8 @@ class _ActionButtonState extends State<ActionButton>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          AnimatedBuilder(
-            animation: Listenable.merge([
-              _activePulseAnimation,
-              _tapPulseAnimation,
-            ]),
-            builder: (context, child) {
-              double scale = 1.0;
-              if (widget.isActive) scale *= _activePulseAnimation.value;
-              if (_tapPulseController.isAnimating) {
-                scale *= _tapPulseAnimation.value;
-              }
-              return Transform.scale(scale: scale, child: child);
-            },
+          Transform.scale(
+            scale: scale,
             child: Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
